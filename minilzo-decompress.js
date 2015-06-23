@@ -55,7 +55,7 @@ var lzo1x = (function () {
         }
         return buf;
       },
-      pack: function() { console.log('lzo output: ' + c); return buf.subarray(0, c); }
+      pack: function() { return buf.subarray(0, c); }
     };
   }
 
