@@ -63,7 +63,7 @@ var lzo1x = (function () {
       },
       require: function(n) {
         if (n !== 0) {
-          if (l - c < (n = n || 1)) {
+          while (l - c < (n = n || 1)) {
             var buf2 = new bufType(l += blockSize);
             buf2.set(buf);
             buf = buf2;
