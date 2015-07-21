@@ -1,4 +1,9 @@
 /*
+ * IMPORTANT: This implementation of LZO decompress() contains bugs.
+ */
+
+
+/*
  * A JavaScript LZO decompressor using Uint8Array as input/output.
  *  By Feng Dihai <fengdh@gmail.com>, 2015/06/22
  */
