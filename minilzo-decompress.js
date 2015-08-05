@@ -1,43 +1,62 @@
 /*
- * IMPORTANT: This implementation of LZO decompress() contains bugs.
- */
-
-
-/*
- * A JavaScript LZO decompressor using Uint8Array as input/output.
- *  By Feng Dihai <fengdh@gmail.com>, 2015/06/22
- */
-
-/*
- * Based on minilzo-js (https://github.com/abraidwood/minilzo-js).
- *  JavaScript port of minilzo by Alistair Braidwood
+ * A pure JavaScript implementation of LZO decompress() function, 
+ * using ArrayBuffer as input/output.
+ *    By Feng Dihai <fengdh@gmail.com>, 2015/06/22
  *
- *
- * This library is free software; you can redistribute it and/or
- *  modify it under the terms of the GNU General Public License as
- *  published by the Free Software Foundation; either version 2 of
- *  the License, or (at your option) any later version.
- *
- * You should have received a copy of the GNU General Public License
- *  along with the minilzo-js library; see the file COPYING.
- *  If not, write to the Free Software Foundation, Inc.,
- *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ * Based on java-compress (https://code.google.com/p/java-compress/).
+ * A pure Java implementation of LZO by sgorti@gmail.com
  */
 
-/*
- * original minilzo.c by:
+/* LZOConstants.java -- various constants (Original file)
+
+   This file is part of the LZO real-time data compression library.
+
+   Copyright (C) 1999 Markus Franz Xaver Johannes Oberhumer
+   Copyright (C) 1998 Markus Franz Xaver Johannes Oberhumer
+   Copyright (C) 1997 Markus Franz Xaver Johannes Oberhumer
+   Copyright (C) 1996 Markus Franz Xaver Johannes Oberhumer
+
+   The LZO library is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of
+   the License, or (at your option) any later version.
+
+   The LZO library is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with the LZO library; see the file COPYING.
+   If not, write to the Free Software Foundation, Inc.,
+   59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+
+   Markus F.X.J. Oberhumer
+   <markus.oberhumer@jk.uni-linz.ac.at>
+   http://wildsau.idv.uni-linz.ac.at/mfx/lzo.html
+   
+
+   Java Porting of minilzo.c (2.03) by
+   Copyright (C) 2010 Mahadevan Gorti Surya Srinivasa <sgorti@gmail.com>
+ */
+
+/**  Java ported code of minilzo.c(2.03).
  *
- * Markus F.X.J. Oberhumer
- * <markus@oberhumer.com>
- * http://www.oberhumer.com/opensource/lzo/
+ * All compress/decompress/decompress_safe were ported. Original java version of MiniLZO supported 
+ * only decompression via Lzo1xDecompressor.java and Lzo1xDecompressor ported way back in 1999.
+ *
+ * This new MiniLZO.java based was taken from minilzo.c version 2.03. 
+ * 
+ *  @author mahadevan.gss
  */
 
-/*
- * NOTE:
- *   the full LZO package can be found at
- *   http://www.oberhumer.com/opensource/lzo/
- */
+(function(global, define) {
 
+  // define module and also export to global
+  define(function (require, exports, module) {
+      return lzo1x;
+  });  
+  
 var lzo1x = (function () {
 
   // Auto expandable read/write buffer of TypedArray
@@ -50,203 +69,183 @@ var lzo1x = (function () {
         return buf = new bufType(l = initSize || 8192);
       },
       require: function(n) {
-        if (n !== 0) {
-          if (l - c < (n = n || 1)) {
-            var buf2 = new bufType(l += blockSize);
-            buf2.set(buf);
-            buf = buf2;
-          }
-          c += n;
+        if (l - c < n) {
+          var buf2 = new bufType(l += blockSize * Math.ceil( (l - c + n ) / blockSize ));
+          buf2.set(buf);
+          buf = buf2;
         }
+        c += n;
         return buf;
       },
-      pack: function() { return buf.subarray(0, c); }
+      pack: function(size) { return buf.subarray(0, size || c); },
     };
   }
 
-    function decompress(pInBuf, bufSize) { // @param Unit8Array
-                     // @return Unit8Array
-      var t,
-        buf = new FlexBuffer(Uint8Array),
-        out = buf.alloc(bufSize),
-        ip = 0,
-        op = 0,
-        ip_end = pInBuf.length,
-        m_pos = 0,
-        outerLoopPos = 0,
-        innerLoopPos = 0,
-        doOuterLoop = true;
+  var c_top_loop=1;
+  var c_first_literal_run=2;
+  var c_match=3;
+  var c_copy_match=4;
+  var c_match_done=5;
+  var c_match_next=6;
+  
+  function decompress(inBuf, bufInitSize, bufBlockSize) {
+    var buf = new FlexBuffer(Uint8Array, bufBlockSize),
+        out = buf.alloc(bufInitSize);
+    
+    var op=0,
+        ip=0,
+        t = inBuf[ip],
+        state = c_top_loop, 
+        m_pos=0,
+        ip_end = inBuf.byteLength;
 
-      if (pInBuf[ip] > 17) {
-        t = pInBuf[ip++] - 17;
-        if (t < 4) {
-          // goto match_next
-          outerLoopPos = 2;
-          innerLoopPos = 3;
-        } else {
-          out = buf.require(t);
-          do {
-            out[op++] = pInBuf[ip++];
-          } while (--t > 0);
-          // goto first_literal_run
-          outerLoopPos = 1;
-        }
+    if (t > 17) {
+      ip++;
+      t -= 17;
+      if (t < 4) {
+        state=c_match_next; //goto match_next;
+      }else{
+        out = buf.require(t);
+        do {
+          out[op++] = inBuf[ip++]; 
+        } while (--t > 0);
+        state=c_first_literal_run;//goto first_literal_run;
       }
-      do {
-        if(outerLoopPos === 0) {
-          t = pInBuf[ip++];
-          if (t >= 16) {
-            // goto match
-            outerLoopPos = 2;
-            continue;
-          }
-          if (t === 0) {
-            while (pInBuf[ip] === 0) {
-              t += 255;
-              ip++;
+    }
+    
+top_loop_ori: do{
+    var if_block=false;
+    switch(state) { //while (true)  top_loop_ori
+        case c_top_loop:  
+            t = inBuf[ip++];
+            if (t >= 16){
+              state=c_match; continue top_loop_ori; //goto match;
             }
-            t += 15 + pInBuf[ip++];
-          }
-
-          t += 3;
-          out = buf.require(t);
-          do {
-            out[op++] = pInBuf[ip++];
-          } while (--t > 0);
-
-          outerLoopPos = 1; // fallthru
-        }
-
-        // first literal run
-        if(outerLoopPos === 1) {
-          t = pInBuf[ip++];
-          if (t < 16) {
-            m_pos = op - 0x0801;
-            m_pos -= t >> 2;
-            m_pos -= pInBuf[ip++] << 2;
-
-            out = buf.require(3);
-            out[op++] = out[m_pos++];
-            out[op++] = out[m_pos++];
-            out[op++] = out[m_pos];
-
-            // goto match_done
-            innerLoopPos = 2;
-          }
-          // else fallthru to match
-          outerLoopPos = 2;
-        }
-
-        if(outerLoopPos === 2) {
-          outerLoopPos = 0;
-          innerLoopPos = 0; // this is a bug
-
-          do {
-            // match
-            if(innerLoopPos === 0) {
-              if (t >= 64) {
-
-                m_pos = op - 1;
-                m_pos -= (t >> 2) & 7;
-                m_pos -= pInBuf[ip++] << 3;
-                t = (t >> 5) - 1;
-
-                // goto copy_match
-                innerLoopPos = 1;
-                continue;
-
-              } else if (t >= 32) {
-                t &= 31;
-                if (t === 0) {
-                  while (pInBuf[ip] === 0) {
-                    t += 255;
-                    ip++;
-                  }
-                  t += 31 + pInBuf[ip++];
-                }
-                m_pos = op - 1;
-                m_pos -= (pInBuf[ip] >> 2) + (pInBuf[ip + 1] << 6);
-                ip += 2;
-
-              } else if (t >= 16) {
-                m_pos = op;
-                m_pos -= (t & 8) << 11;
-                t &= 7;
-                if (t === 0) {
-                  while (pInBuf[ip] === 0) {
-                    t += 255;
-                    ip++;
-                  }
-                  t += 7 + pInBuf[ip++];
-                }
-
-                m_pos -= (pInBuf[ip] >> 2) + (pInBuf[ip + 1] << 6);
-                ip += 2;
-                if (m_pos === op) {
-                  // eof
-                  doOuterLoop = false;
-                  break;
-                }
-                m_pos -= 0x4000;
-
-              } else {
-                m_pos = op - 1;
-                m_pos -= t >> 2;
-                m_pos -= pInBuf[ip++] << 2;
-
-                out = buf.require(2);
-                out[op++] = out[m_pos++];
-                out[op++] = out[m_pos];
-
-                // goto match_done
-                innerLoopPos = 2;
-                continue;
+            if (t === 0) {
+              while (inBuf[ip] === 0) {
+                t += 255;
+                ip++;
               }
-              innerLoopPos = 1;
+              t += 15 + inBuf[ip++];
             }
 
-            if(innerLoopPos === 1) {
+            //s=3; do out[op++] = inBuf[ip++]; while(--s > 0);//* (lzo_uint32 *)(op) = * (const lzo_uint32 *)(ip);op += 4; ip += 4;
+            out = buf.require(4);
+            out[op++] = inBuf[ip++];
+            out[op++] = inBuf[ip++];
+            out[op++] = inBuf[ip++];
+            out[op++] = inBuf[ip++];
+            
+            if (--t > 0) {
+              out = buf.require(t);
+              do out[op++] = inBuf[ip++]; while (--t > 0);
+            }
+       case c_first_literal_run: /*first_literal_run: */
+            t = inBuf[ip++];
+            if (t >= 16) {
+              state=c_match; continue top_loop_ori;  //goto match;
+            }
+            m_pos = op - 0x801 - (t >> 2) - (inBuf[ip++] << 2);
+            out = buf.require(3);
+            out[op++] = out[m_pos++]; out[op++] = out[m_pos++]; out[op++] = out[m_pos];
+
+            state = c_match_done; continue top_loop_ori;//goto match_done;
+       case c_match:
+            //do {
+            //match:
+            if (t >= 64) {
+              m_pos = op - 1;
+              m_pos -= (t >> 2) & 7;
+              m_pos -= inBuf[ip++] << 3;
+              t = (t >> 5) - 1;
+              state = c_copy_match; continue top_loop_ori;//goto copy_match;
+
+            } else if (t >= 32) {
+              t &= 31;
+              if (t === 0) {
+                while (inBuf[ip] === 0) {
+                  t += 255;
+                  ip++;
+                }
+                t += 31 + inBuf[ip++];
+              }
+              m_pos = op - 1;
+              m_pos -= (( inBuf[ip] + ( inBuf[ip+1] << 8) ) >> 2);//m_pos -= (* (const unsigned short *) ip) >> 2;
+              
+              ip += 2;
+            } else if (t >= 16) {
+              m_pos = op;
+              m_pos -= (t & 8) << 11;
+              
+              t &= 7;
+              if (t === 0) {
+                while (inBuf[ip] === 0) {
+                  t += 255;
+                  ip++;
+                }
+                t += 7 + inBuf[ip++];
+              }
+              m_pos -= (( inBuf[ip] + ( inBuf[ip+1] << 8) ) >> 2);//m_pos -= (* (const unsigned short *) ip) >> 2;
+              ip += 2;
+              if (m_pos === op){
+                break top_loop_ori;//goto eof_found;
+              }
+              m_pos -= 0x4000;
+            } else {
+              m_pos = op - 1;
+              m_pos -= t >> 2;
+              m_pos -= inBuf[ip++] << 2;
+              
+              out = buf.require(2);
+              out[op++] = out[m_pos++]; out[op++] = out[m_pos];
+              state=c_match_done;continue top_loop_ori;//goto match_done;
+            }
+            if (t >= 6 && (op - m_pos) >= 4) {
               t += 2;
               out = buf.require(t);
-              do {
-                out[op++] = out[m_pos++];
-              } while (--t > 0);
-              innerLoopPos = 2; // fallthru
+              if_block=true;
+              do out[op++] = out[m_pos++]; while (--t > 0);
             }
-
-            if(innerLoopPos === 2) {
-              t = pInBuf[ip - 2] & 3;
-              if (t === 0) {
-                break;
-              }
-              innerLoopPos = 3; // fallthru
-            }
-
-            if(innerLoopPos === 3) {
-              out = buf.require();
-              out[op++] = pInBuf[ip++];
-              if (t > 1) {
-                out = buf.require();
-                out[op++] = pInBuf[ip++];
-
-                if (t > 2) {
-                  out = buf.require();
-                  out[op++] = pInBuf[ip++];
-                }
-              }
-              t = pInBuf[ip++];
-              innerLoopPos = 0; // fallthru to loop start
-            }
-          } while (true);
+       case c_copy_match: if(!if_block){
+                     t += 2;
+                     out = buf.require(t);
+                     do out[op++] = out[m_pos++]; while( --t > 0) ;
+                   }
+       case c_match_done:
+                   t = inBuf[ip-2] & 3;
+                   if (t === 0){
+                     state=c_top_loop; continue top_loop_ori; //break;
+                   }
+       case c_match_next: 
+                   out = buf.require(1);
+                   out[op++] = inBuf[ip++];
+                   if (t > 1) { 
+                     out = buf.require(1);
+                     out[op++] = inBuf[ip++]; 
+                     if (t > 2) { 
+                       out = buf.require(1);
+                       out[op++] = inBuf[ip++]; 
+                     } 
+                   }
+                   t = inBuf[ip++];
+                   state=c_match; continue top_loop_ori;
         }
-      } while (doOuterLoop);
+    }while(true);
 
-      return buf.pack();
+    return buf.pack(op);
   }
+  
 
   return {
-    decompress: function(s, bufSize) {
-      return decompress(new Uint8Array(s), bufSize);
+    decompress: function(s, bufInitSize, bufBlockSize) {
+      return decompress(new Uint8Array(s), bufInitSize, bufBlockSize);
     }
   };
 })();
+
+}( this, // refers to global
+   // Help Node out by setting up define.
+   typeof module === 'object' && typeof define !== 'function'
+     ? function (factory) { module.exports = factory(require, exports, module); } 
+     : define
+));
